@@ -1,0 +1,58 @@
+# Runs Promise Card with its own Postgres database.
+#
+#   docker compose up --build        -> http://localhost:3000
+#
+# Sign-in links are printed in the app logs until email is set up:
+#   docker compose logs app | grep magic_link
+#
+# Settings come from a .env file next to this one (copy .env.example).
+# On EC2, set NEXTAUTH_URL to the address you open in the browser,
+# e.g. http://<ec2-public-ip>:3000
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: promise
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-promise}
+      POSTGRES_DB: promise
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U promise -d promise"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Applies database migrations once, then exits.
+  migrate:
+    build: .
+    image: promise-card:local
+    command: ["node", "scripts/migrate.mjs"]
+    environment:
+      DATABASE_URL: postgres://promise:${POSTGRES_PASSWORD:-promise}@db:5432/promise
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    image: promise-card:local
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgres://promise:${POSTGRES_PASSWORD:-promise}@db:5432/promise
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?Set NEXTAUTH_SECRET in .env}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      EMAIL_SERVER: ${EMAIL_SERVER:-}
+      EMAIL_FROM: ${EMAIL_FROM:-Promise Card <hello@promisecard.store>}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:
